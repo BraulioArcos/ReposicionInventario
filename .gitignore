@@ -1,0 +1,15 @@
+# Exportaciones reales: nunca versionar.
+datos/*
+!datos/.gitkeep
+
+# Entorno y archivos temporales de Python.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Archivos de editor y sistema operativo.
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
