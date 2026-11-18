@@ -8,9 +8,9 @@ inventario. No se conecta ni modifica el sistema de ventas de la empresa.
 - `datos/`: exportaciones reales locales; está excluida de Git.
 - `datos_ejemplo/`: datos ficticios para pruebas.
 - `generar_ejemplo.py`: genera seis meses de ventas diarias para 30 productos
-  y cinco sedes (tres tiendas y dos almacenes).
-- `config.py`: permite adaptar los encabezados del archivo real a los nombres
-  esperados por la aplicación.
+  y cinco sedes, todas tiendas.
+- `config.py`: define las sedes disponibles y permite adaptar los encabezados
+  del archivo real a los nombres esperados por la aplicación.
 - `requirements.txt`: dependencias previstas para el prototipo.
 
 ## Generar los datos ficticios

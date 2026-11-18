@@ -5,6 +5,8 @@ import random
 from datetime import date, timedelta
 from pathlib import Path
 
+from config import SEDES
+
 
 PRODUCTOS = [
     ("Laptop Nova 14", "Computadoras", 1.8),
@@ -39,21 +41,15 @@ PRODUCTOS = [
     ("Adaptador USB-C Multipuerto", "Accesorios", 2.0),
 ]
 
-SEDES = [
-    ("Tienda Centro", 1.15),
-    ("Tienda Cayma", 0.95),
-    ("Tienda Paucarpata", 0.85),
-    ("Almacén Principal", 1.35),
-    ("Almacén Norte", 0.7),
-]
+TIPOS_REPOSICION = ["riesgo", "exceso"] + ["normal"] * 10
 
 CAMPOS = [
+    "fecha",
+    "sede",
     "producto",
     "categoria",
-    "sede",
-    "fecha",
-    "cantidad_vendida",
     "stock",
+    "cantidad_vendida",
 ]
 
 
@@ -61,53 +57,89 @@ def generar_filas(fecha_inicio, dias, semilla=42):
     """Produce un registro diario por producto y sede, con existencias simuladas."""
     azar = random.Random(semilla)
     inventario = {}
+    combinaciones = []
+    factores_sede = {sede: azar.uniform(0.75, 1.3) for sede in SEDES}
 
-    for producto, _, demanda_base in PRODUCTOS:
-        for sede, factor_sede in SEDES:
-            inventario[(producto, sede)] = max(
-                5, round(demanda_base * factor_sede * azar.uniform(12, 24))
+    indice = 0
+    for producto, categoria, demanda_base in PRODUCTOS:
+        for sede in SEDES:
+            demanda_diaria = demanda_base * factores_sede[sede]
+            perfil = TIPOS_REPOSICION[indice % len(TIPOS_REPOSICION)]
+            intervalo = (
+                azar.randint(20, 30)
+                if perfil == "normal"
+                else azar.randint(35, 50)
             )
+            dias_stock = {
+                "riesgo": azar.uniform(8, 12),
+                "exceso": azar.uniform(60, 100),
+                "normal": azar.uniform(18, 30),
+            }[perfil]
+            inventario[(producto, sede)] = max(
+                1, round(demanda_diaria * dias_stock)
+            )
+            combinaciones.append(
+                (producto, categoria, sede, demanda_diaria, perfil, intervalo)
+            )
+            indice += 1
 
     for numero_dia in range(dias):
         fecha = fecha_inicio + timedelta(days=numero_dia)
         factor_dia = 0.78 if fecha.weekday() == 6 else 1.0
 
-        for producto, categoria, demanda_base in PRODUCTOS:
-            for sede, factor_sede in SEDES:
-                clave = (producto, sede)
-                stock = inventario[clave]
-                demanda = max(
-                    0,
-                    round(
-                        azar.gauss(
-                            demanda_base * factor_sede * factor_dia,
-                            max(0.7, demanda_base * 0.45),
-                        )
-                    ),
-                )
-                vendido = min(stock, demanda)
-                stock -= vendido
+        for (
+            producto,
+            categoria,
+            sede,
+            demanda_diaria,
+            perfil,
+            intervalo,
+        ) in combinaciones:
+            clave = (producto, sede)
+            stock = inventario[clave]
+            demanda = max(
+                0,
+                round(
+                    azar.gauss(
+                        demanda_diaria * factor_dia,
+                        max(0.7, demanda_diaria * 0.45),
+                    )
+                ),
+            )
 
-                if fecha.weekday() == 0:
+            if perfil == "riesgo" and numero_dia == dias - 1:
+                stock = max(stock, demanda + azar.randint(1, 5))
+
+            vendido = min(stock, demanda)
+            stock -= vendido
+
+            if perfil == "riesgo":
+                if numero_dia % intervalo == 0 and numero_dia < dias - 35:
+                    objetivo = max(5, round(demanda_diaria * azar.uniform(12, 18)))
+                    stock = max(stock, objetivo)
+            elif perfil == "normal":
+                if numero_dia > 0 and numero_dia % intervalo == 0:
+                    if stock <= demanda_diaria * 12:
+                        objetivo = max(
+                            8, round(demanda_diaria * azar.uniform(20, 32))
+                        )
+                        stock = max(stock, objetivo)
+            elif numero_dia > 0 and numero_dia % intervalo == 0:
+                if stock <= demanda_diaria * 30:
                     objetivo = max(
-                        8,
-                        round(
-                            demanda_base
-                            * factor_sede
-                            * azar.uniform(14, 26)
-                        ),
+                        20, round(demanda_diaria * azar.uniform(70, 100))
                     )
                     stock = max(stock, objetivo)
 
-                inventario[clave] = stock
-                yield {
-                    "producto": producto,
-                    "categoria": categoria,
-                    "sede": sede,
-                    "fecha": fecha.isoformat(),
-                    "cantidad_vendida": vendido,
-                    "stock": stock,
-                }
+            inventario[clave] = stock
+            yield {
+                "fecha": fecha.isoformat(),
+                "sede": sede,
+                "producto": producto,
+                "categoria": categoria,
+                "stock": stock,
+                "cantidad_vendida": vendido,
+            }
 
 
 def generar_archivo(ruta_salida=None, fecha_fin=None, dias=183, semilla=42):

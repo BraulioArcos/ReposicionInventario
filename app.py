@@ -4,6 +4,8 @@ from math import ceil
 import pandas as pd
 import streamlit as st
 
+from config import SEDES
+
 
 ROOT = Path(__file__).parent
 EXAMPLE_CSV = ROOT / "datos_ejemplo" / "ventas_ejemplo.csv"
@@ -78,7 +80,7 @@ categories = sorted(data["categoria"].dropna().unique())
 selected_categories = st.sidebar.multiselect(
     "Categorías", categories, default=categories
 )
-locations = sorted(data["sede"].dropna().unique())
+locations = SEDES
 selected_locations = st.sidebar.multiselect("Sedes", locations, default=locations)
 
 filtered = data.loc[
@@ -122,11 +124,12 @@ st.caption(
 )
 period_days = max((end_date - start_date).days + 1, 1)
 recommendations = (
-    filtered.groupby(["producto", "categoria", "sede"], as_index=False)
+    filtered.groupby(["categoria", "sede"], as_index=False)
     .agg(unidades_vendidas=("cantidad_vendida", "sum"))
     .merge(
-        latest_stock[["producto", "sede", "stock"]],
-        on=["producto", "sede"],
+        latest_stock.groupby(["categoria", "sede"], as_index=False)["stock"]
+        .sum(),
+        on=["categoria", "sede"],
         how="left",
     )
 )
@@ -143,7 +146,6 @@ recommendations = recommendations.sort_values(
 st.dataframe(
     recommendations.rename(
         columns={
-            "producto": "Producto",
             "categoria": "Categoría",
             "sede": "Sede",
             "unidades_vendidas": "Unidades vendidas",
