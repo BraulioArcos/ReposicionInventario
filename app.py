@@ -2,9 +2,15 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
 
 from config import SEDES
-from reposicion import calcular_ranking, calcular_reposicion, fecha_hoy
+from reposicion import (
+    calcular_ranking,
+    calcular_reposicion,
+    calcular_redistribucion,
+    fecha_hoy,
+)
 
 
 ROOT = Path(__file__).parent
@@ -117,14 +123,21 @@ with tab_reposicion:
             tabla["Estado"].isin(["Crítico", "Atención", "Sin rotación"])
         ]
 
+    urgencia = {
+        "Crítico": 0,
+        "Atención": 1,
+        "Sin rotación": 2,
+        "Normal": 3,
+        "Sobrestock": 4,
+    }
+    tabla["_urgencia"] = tabla["Estado"].map(urgencia)
     tabla = tabla.sort_values(
-        ["Estado", "Cobertura (días)", "Producto", "Sede"],
-        key=lambda columna: columna.map(
-            {"Crítico": 0, "Atención": 1, "Sin rotación": 2, "Normal": 3, "Sobrestock": 4}
-        ) if columna.name == "Estado" else columna,
+        ["_urgencia", "Cobertura (días)", "Producto", "Sede"],
         na_position="last",
+    ).drop(columns="_urgencia")
+    tabla = tabla.assign(
+        Estado=tabla["Estado"].map(mostrar_estado)
     )
-    tabla["Estado"] = tabla["Estado"].map(mostrar_estado)
 
     st.dataframe(
         tabla,
@@ -138,8 +151,7 @@ with tab_reposicion:
     )
 
     hoy = fecha_hoy(data).date().isoformat()
-    descarga = tabla.drop(columns=["Estado"]).copy()
-    descarga["Estado"] = resultado.loc[tabla.index, "Estado"].map(mostrar_estado)
+    descarga = tabla.copy()
     descarga = descarga.sort_values(["Sede", "Producto"])
     csv = descarga.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
@@ -153,7 +165,24 @@ with tab_ranking:
     st.caption("Ventas acumuladas en los últimos 30 días.")
     nivel = st.selectbox("Agrupar por", ["Producto", "Categoría", "Sede"])
     ranking = calcular_ranking(data, nivel=nivel, dias=30)
-    st.info("Ranking preparado para gráfico de barras.")
+    figura = go.Figure(
+        go.Bar(
+            x=ranking["Unidades vendidas"],
+            y=ranking[nivel],
+            orientation="h",
+            text=ranking["Unidades vendidas"],
+            textposition="outside",
+            cliponaxis=False,
+        )
+    )
+    figura.update_layout(
+        height=max(420, 18 * len(ranking)),
+        margin={"l": 180, "r": 60, "t": 20, "b": 40},
+        yaxis={"autorange": "reversed"},
+        xaxis_title="Unidades vendidas",
+        yaxis_title=nivel,
+    )
+    st.plotly_chart(figura, width="stretch")
 
 with tab_redistribucion:
     st.info("Las sugerencias de redistribución se calcularán aquí.")
