@@ -58,6 +58,10 @@ for column in ("cantidad_vendida", "stock"):
     data[column] = pd.to_numeric(data[column], errors="coerce")
 if "stock_almacen" in data.columns:
     data["stock_almacen"] = pd.to_numeric(data["stock_almacen"], errors="coerce")
+else:
+    st.sidebar.warning(
+        "Sin stock_almacen no se sabe si hay unidades disponibles para reponer."
+    )
 
 invalid_rows = data[list(REQUIRED_COLUMNS)].isna().any(axis=1)
 if invalid_rows.any():

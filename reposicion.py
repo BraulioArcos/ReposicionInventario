@@ -119,6 +119,11 @@ def calcular_reposicion(data, dias_objetivo=7):
             disponible = max(0, int(stock_almacen.get(clave, 0) or 0))
             fila["Stock almacén"] = disponible
             fila["Se puede reponer"] = min(reponer, disponible)
+            fila["Disponibilidad"] = (
+                "Sin stock en almacén"
+                if reponer > disponible
+                else "Stock suficiente"
+            )
         filas.append(fila)
 
     resultado = pd.DataFrame(filas)

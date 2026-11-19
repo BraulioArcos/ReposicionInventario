@@ -50,6 +50,7 @@ CAMPOS = [
     "categoria",
     "stock",
     "cantidad_vendida",
+    "stock_almacen",
 ]
 
 
@@ -57,6 +58,7 @@ def generar_filas(fecha_inicio, dias, semilla=42):
     """Produce un registro diario por producto y sede, con existencias simuladas."""
     azar = random.Random(semilla)
     inventario = {}
+    inventario_almacen = {}
     combinaciones = []
     factores_sede = {sede: azar.uniform(0.75, 1.3) for sede in SEDES}
 
@@ -78,6 +80,7 @@ def generar_filas(fecha_inicio, dias, semilla=42):
             inventario[(producto, sede)] = max(
                 1, round(demanda_diaria * dias_stock)
             )
+            inventario_almacen[(producto, sede)] = azar.randint(0, 45)
             combinaciones.append(
                 (producto, categoria, sede, demanda_diaria, perfil, intervalo)
             )
@@ -139,6 +142,7 @@ def generar_filas(fecha_inicio, dias, semilla=42):
                 "categoria": categoria,
                 "stock": stock,
                 "cantidad_vendida": vendido,
+                "stock_almacen": inventario_almacen[clave],
             }
 
 
