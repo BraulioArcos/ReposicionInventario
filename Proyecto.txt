@@ -1,0 +1,6 @@
+
+Prototipo independiente de reposición diaria para cinco tiendas. Lee
+exportaciones CSV locales, calcula alertas y sugerencias por producto y sede,
+realiza rankings y propone redistribuciones entre sedes. No se conecta ni
+modifica el sistema de ventas. Los datos reales deben permanecer excluidos de
+Git en la carpeta datos/.
