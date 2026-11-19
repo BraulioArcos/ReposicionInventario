@@ -150,3 +150,65 @@ def calcular_ranking(data, nivel="Producto", dias=30):
         .rename(columns={columna: nivel, "cantidad_vendida": "Unidades vendidas"})
         .sort_values("Unidades vendidas", ascending=True)
     )
+
+
+def calcular_redistribucion(data, dias_objetivo=7):
+    """Sugiere movimientos entre sedes sin llevar al donante bajo 30 días."""
+    reposicion = calcular_reposicion(data, dias_objetivo=dias_objetivo)
+    ventas = {}
+    for _, fila in reposicion.iterrows():
+        clave = (fila["Producto"], fila["Sede"])
+        ventas[clave] = fila["Venta/día (30d)"]
+
+    sugerencias = []
+    productos = sorted(reposicion["Producto"].dropna().unique())
+    for producto in productos:
+        filas = reposicion.loc[reposicion["Producto"] == producto]
+        receptores = filas.loc[
+            filas["Estado"].isin(["Crítico", "Atención"])
+        ].sort_values("Cobertura (días)")
+        donantes = filas.loc[
+            filas["Cobertura (días)"] > 45
+        ].sort_values("Cobertura (días)", ascending=False)
+
+        for _, receptor in receptores.iterrows():
+            venta = float(receptor["Venta/día (30d)"])
+            if venta <= 0:
+                continue
+            stock_receptor = int(receptor["Stock"])
+            objetivo = ceil(venta * 7)
+            necesita = max(0, objetivo - stock_receptor)
+            cobertura_receptor = receptor["Cobertura (días)"]
+
+            for _, donante in donantes.iterrows():
+                if necesita < 2:
+                    break
+                venta_donante = float(donante["Venta/día (30d)"])
+                if venta_donante <= 0:
+                    continue
+                stock_donante = int(donante["Stock"])
+                disponible = stock_donante - ceil(venta_donante * 30)
+                mover = min(necesita, disponible)
+                if mover < 2:
+                    continue
+
+                stock_donante -= mover
+                stock_receptor += mover
+                necesita -= mover
+                cobertura_donante = stock_donante / venta_donante
+                cobertura_receptora = stock_receptor / venta
+                sugerencias.append({
+                    "Origen": donante["Sede"],
+                    "Destino": receptor["Sede"],
+                    "Producto": producto,
+                    "Mover": mover,
+                    "Cobertura origen antes": round(donante["Cobertura (días)"], 1),
+                    "Cobertura origen después": round(cobertura_donante, 1),
+                    "Cobertura destino antes": round(cobertura_receptor, 1),
+                    "Cobertura destino después": round(cobertura_receptora, 1),
+                })
+                receptor["Stock"] = stock_receptor
+                donantes.loc[
+                    donantes["Sede"] == donante["Sede"], "Stock"
+                ] = stock_donante
+    return pd.DataFrame(sugerencias)

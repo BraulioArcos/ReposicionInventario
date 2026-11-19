@@ -185,4 +185,16 @@ with tab_ranking:
     st.plotly_chart(figura, width="stretch")
 
 with tab_redistribucion:
-    st.info("Las sugerencias de redistribución se calcularán aquí.")
+    st.caption(
+        "Movimientos sugeridos de sedes con cobertura superior a 45 días "
+        "hacia sedes Críticas o en Atención."
+    )
+    redistribucion = calcular_redistribucion(data)
+    if redistribucion.empty:
+        st.info("No hay movimientos de al menos 2 unidades que cumplan las reglas.")
+    else:
+        st.dataframe(
+            redistribucion,
+            width="stretch",
+            hide_index=True,
+        )
