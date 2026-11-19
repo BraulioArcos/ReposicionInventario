@@ -1,10 +1,10 @@
 from pathlib import Path
-from math import ceil
 
 import pandas as pd
 import streamlit as st
 
 from config import SEDES
+from reposicion import calcular_ranking, calcular_reposicion, fecha_hoy
 
 
 ROOT = Path(__file__).parent
@@ -19,12 +19,20 @@ REQUIRED_COLUMNS = {
 }
 
 
+def mostrar_estado(estado):
+    iconos = {
+        "Crítico": "🔴 Crítico",
+        "Atención": "🟠 Atención",
+        "Normal": "🟢 Normal",
+        "Sobrestock": "🟣 Sobrestock",
+        "Sin rotación": "⚪ Sin rotación",
+    }
+    return iconos.get(estado, estado)
+
+
 st.set_page_config(page_title="Reposición e inventario", page_icon="📦", layout="wide")
 st.title("Reposición e inventario")
-st.caption(
-    "Prototipo local para explorar ventas e inventario. "
-    "Los datos de ejemplo son simulados."
-)
+st.caption("Prototipo local para revisar reposición diaria con exportaciones CSV.")
 
 uploaded_file = st.sidebar.file_uploader("Cargar exportación CSV", type=["csv"])
 if uploaded_file:
@@ -48,6 +56,8 @@ if missing_columns:
 data["fecha"] = pd.to_datetime(data["fecha"], errors="coerce")
 for column in ("cantidad_vendida", "stock"):
     data[column] = pd.to_numeric(data[column], errors="coerce")
+if "stock_almacen" in data.columns:
+    data["stock_almacen"] = pd.to_numeric(data["stock_almacen"], errors="coerce")
 
 invalid_rows = data[list(REQUIRED_COLUMNS)].isna().any(axis=1)
 if invalid_rows.any():
@@ -60,108 +70,86 @@ if data.empty:
     st.error("No hay filas válidas para mostrar.")
     st.stop()
 
-min_date = data["fecha"].min().date()
-max_date = data["fecha"].max().date()
-date_range = st.sidebar.date_input(
-    "Periodo",
-    value=(min_date, max_date),
-    min_value=min_date,
-    max_value=max_date,
+dias_objetivo = st.sidebar.slider(
+    "Días de cobertura objetivo", min_value=7, max_value=45, value=7
 )
-if not isinstance(date_range, tuple) or len(date_range) != 2:
-    st.info("Selecciona una fecha de inicio y una fecha de fin.")
-    st.stop()
-start_date, end_date = date_range
-coverage_days = st.sidebar.slider(
-    "Días de cobertura objetivo", min_value=7, max_value=45, value=14
-)
+categorias = sorted(data["categoria"].dropna().unique())
+sedes_disponibles = [sede for sede in SEDES if sede in set(data["sede"].dropna())]
+if not sedes_disponibles:
+    sedes_disponibles = sorted(data["sede"].dropna().unique())
 
-categories = sorted(data["categoria"].dropna().unique())
 selected_categories = st.sidebar.multiselect(
-    "Categorías", categories, default=categories
+    "Categorías", categorias, default=categorias
 )
-locations = SEDES
-selected_locations = st.sidebar.multiselect("Sedes", locations, default=locations)
-
-filtered = data.loc[
-    data["fecha"].dt.date.between(start_date, end_date)
-    & data["categoria"].isin(selected_categories)
-    & data["sede"].isin(selected_locations)
-].copy()
+selected_locations = st.sidebar.multiselect(
+    "Sedes", sedes_disponibles, default=sedes_disponibles
+)
 
 st.caption(f"Fuente: {source_label}")
-if filtered.empty:
-    st.info("No hay datos para los filtros seleccionados.")
-    st.stop()
+resultado = calcular_reposicion(data, dias_objetivo=dias_objetivo)
+resultado = resultado[
+    resultado["Categoría"].isin(selected_categories)
+    & resultado["Sede"].isin(selected_locations)
+].copy()
 
-latest_stock = (
-    filtered.sort_values("fecha")
-    .drop_duplicates(["producto", "sede"], keep="last")
+tab_reposicion, tab_ranking, tab_redistribucion = st.tabs(
+    ["Reposición de hoy", "Más vendidos", "Redistribución"]
 )
-units_sold = int(filtered["cantidad_vendida"].sum())
-total_stock = int(latest_stock["stock"].sum())
-low_stock_count = int((latest_stock["stock"] <= 5).sum())
 
-metric1, metric2, metric3, metric4 = st.columns(4)
-metric1.metric("Unidades vendidas", f"{units_sold:,}")
-metric2.metric("Stock al cierre", f"{total_stock:,}")
-metric3.metric("Productos", f"{filtered['producto'].nunique():,}")
-metric4.metric("Producto/sede con stock ≤ 5", f"{low_stock_count:,}")
+with tab_reposicion:
+    criticos = int((resultado["Estado"] == "Crítico").sum())
+    atencion = int((resultado["Estado"] == "Atención").sum())
+    unidades = int(resultado["A reponer"].sum())
 
-sales_by_day = (
-    filtered.groupby("fecha", as_index=False)["cantidad_vendida"].sum()
-    .set_index("fecha")
-    .rename(columns={"cantidad_vendida": "Unidades"})
-)
-st.subheader("Ventas durante el periodo")
-st.line_chart(sales_by_day)
+    columna1, columna2, columna3 = st.columns(3)
+    columna1.metric("Críticos", f"{criticos:,}")
+    columna2.metric("En atención", f"{atencion:,}")
+    columna3.metric("Unidades a reponer hoy", f"{unidades:,}")
 
-st.subheader("Sugerencia de reposición")
-st.caption(
-    f"Estimación simple: promedio de ventas diarias del periodo × "
-    f"{coverage_days} días de cobertura, menos el último stock registrado. "
-    "No considera tiempos de entrega ni pedidos en tránsito."
-)
-period_days = max((end_date - start_date).days + 1, 1)
-recommendations = (
-    filtered.groupby(["categoria", "sede"], as_index=False)
-    .agg(unidades_vendidas=("cantidad_vendida", "sum"))
-    .merge(
-        latest_stock.groupby(["categoria", "sede"], as_index=False)["stock"]
-        .sum(),
-        on=["categoria", "sede"],
-        how="left",
+    solo_alertas = st.checkbox("Solo alertas", value=True)
+    tabla = resultado.copy()
+    if solo_alertas:
+        tabla = tabla[
+            tabla["Estado"].isin(["Crítico", "Atención", "Sin rotación"])
+        ]
+
+    tabla = tabla.sort_values(
+        ["Estado", "Cobertura (días)", "Producto", "Sede"],
+        key=lambda columna: columna.map(
+            {"Crítico": 0, "Atención": 1, "Sin rotación": 2, "Normal": 3, "Sobrestock": 4}
+        ) if columna.name == "Estado" else columna,
+        na_position="last",
     )
-)
-recommendations["promedio_diario"] = (
-    recommendations["unidades_vendidas"] / period_days
-)
-recommendations["reponer"] = (
-    recommendations["promedio_diario"] * coverage_days
-    - recommendations["stock"]
-).clip(lower=0).apply(ceil)
-recommendations = recommendations.sort_values(
-    ["reponer", "promedio_diario"], ascending=False
-)
-st.dataframe(
-    recommendations.rename(
-        columns={
-            "categoria": "Categoría",
-            "sede": "Sede",
-            "unidades_vendidas": "Unidades vendidas",
-            "stock": "Stock actual",
-            "promedio_diario": "Promedio diario",
-            "reponer": "Sugerencia de reposición",
-        }
-    ),
-    width="stretch",
-    hide_index=True,
-)
+    tabla["Estado"] = tabla["Estado"].map(mostrar_estado)
 
-st.subheader("Ventas por categoría")
-sales_by_category = (
-    filtered.groupby("categoria")["cantidad_vendida"]
-    .sum()
-    .sort_values(ascending=False)
-)
-st.bar_chart(sales_by_category)
+    st.dataframe(
+        tabla,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Cobertura (días)": st.column_config.NumberColumn(format="%.1f"),
+            "Venta/día (30d)": st.column_config.NumberColumn(format="%.2f"),
+            "Venta/día (7d)": st.column_config.NumberColumn(format="%.2f"),
+        },
+    )
+
+    hoy = fecha_hoy(data).date().isoformat()
+    descarga = tabla.drop(columns=["Estado"]).copy()
+    descarga["Estado"] = resultado.loc[tabla.index, "Estado"].map(mostrar_estado)
+    descarga = descarga.sort_values(["Sede", "Producto"])
+    csv = descarga.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "Descargar lista del día",
+        data=csv,
+        file_name=f"reposicion_{hoy}.csv",
+        mime="text/csv",
+    )
+
+with tab_ranking:
+    st.caption("Ventas acumuladas en los últimos 30 días.")
+    nivel = st.selectbox("Agrupar por", ["Producto", "Categoría", "Sede"])
+    ranking = calcular_ranking(data, nivel=nivel, dias=30)
+    st.info("Ranking preparado para gráfico de barras.")
+
+with tab_redistribucion:
+    st.info("Las sugerencias de redistribución se calcularán aquí.")
