@@ -23,3 +23,7 @@ MINIMOS_POR_PRODUCTO = {
     # Ejemplo: "Tarjeta gráfica RTX": 1,
 }
 
+# Perfil usado para distribuir la demanda estimada entre tiendas.
+NIVEL_PERFIL = "categoria"
+UMBRAL_PESO = 0.15
+

@@ -1,102 +1,113 @@
 # Prototipo de reposición y análisis de ventas
 
-Aplicación local e independiente para analizar archivos exportados de ventas e
+Aplicación local e independiente para analizar exportaciones de ventas e
 inventario. No se conecta ni modifica el sistema de ventas de la empresa.
 
-## Estructura inicial
+## Estructura
 
-- `datos/`: exportaciones reales locales; está excluida de Git.
+- `datos/`: exportaciones reales locales, excluidas de Git.
 - `datos_ejemplo/`: datos ficticios para pruebas.
-- `generar_ejemplo.py`: genera seis meses de ventas diarias para 30 productos
-  y cinco sedes, todas tiendas.
-- `config.py`: define las sedes disponibles y permite adaptar los encabezados
-  del archivo real a los nombres esperados por la aplicación.
-- `requirements.txt`: dependencias previstas para el prototipo.
+- `config.py`: tiendas y parámetros del cálculo.
+- `reposicion.py`: cálculos puros de estimación, reposición y resumen.
+- `app.py`: tablero Streamlit.
 
-## Generar los datos ficticios
-
-```powershell
-python --version
-python generar_ejemplo.py
-```
-
-El archivo resultante es `datos_ejemplo/ventas_ejemplo.csv`. Se puede abrir en
-Excel; sus fechas cubren los 183 días que terminan en la fecha de ejecución.
-Contiene 27 450 filas (30 productos por cinco sedes por 183 días). El generador
-usa una semilla fija para que los valores sean reproducibles y solo requiere
-Python; todavía no hace falta instalar las dependencias de `requirements.txt`.
-
-La columna `stock` representa las existencias simuladas al cierre de cada día.
-Los nombres de columna del CSV coinciden inicialmente con los nombres
-canónicos definidos en `config.py`.
-
-## Ejecutar el tablero
-
-Desde esta carpeta, instala las dependencias e inicia Streamlit:
+## Ejecutar
 
 ```powershell
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-El tablero abre los datos ficticios por defecto. También permite cargar una
-exportación CSV con las columnas canónicas de `config.py`. Las sugerencias de
-reposición son estimaciones simples basadas en las ventas de los últimos 30
-días y el stock registrado; no consideran tiempos de entrega ni pedidos en
-tránsito.
+El tablero abre el CSV de ejemplo por defecto y permite cargar una exportación
+CSV con las columnas `fecha`, `producto`, `categoria`, `sede`,
+`cantidad_vendida` y `stock`. `sede` identifica la tienda del registro de
+inventario; **no se usa para asignar ventas a una tienda**. Si está disponible,
+`stock_min` aplica el mínimo específico de esa tienda y producto. El stock de
+almacén puede venir en `stock_almacen` o en una o más columnas cuyo nombre
+empiece por `ALMACEN`; estas últimas se suman.
 
-## Ejecutar pruebas
+También se pueden seleccionar los dos reportes Excel y cargarlos juntos:
+
+- `ReporteProductos.xlsx`: usa `Stock x Tienda` para existencias de las cinco
+  tiendas y columnas `ALMACEN*`; usa `Tienda` para `StockMin`.
+- `ReporteVentas1.xlsx`: usa las líneas de `Datos Planos` (`Fecha Venta`,
+  `Producto`, `PartNumber`, `Tipo`, `Cantidad`). No lee ni usa `Usuario` o
+  `Vendedor` para atribuir ventas.
+
+El importador relaciona productos con el inventario por nombre normalizado o
+por `PartNumber` que coincida exactamente con `Codigo`. Las ventas se conservan
+a nivel empresa aunque no se encuentre una coincidencia. Para un producto sin
+coincidencia, se intenta obtener la categoría desde `Tipo` solo si el cruce no
+es ambiguo; si no se puede asignar un perfil, la venta permanece en el resumen
+empresa y se advierte que no pudo estimarse por tienda.
+
+## Criterio de demanda
+
+La venta de cada producto se conoce exactamente a nivel empresa. La app suma
+las unidades vendidas en todas las tiendas durante los últimos 30 días y divide
+por 30 para obtener `venta_empresa/día`. No atribuye ventas a la tienda del
+vendedor: los vendedores rotan entre tiendas y la exportación no identifica
+fiablemente dónde ocurrió cada venta.
+
+Por eso la vista **Qué necesita cada tienda** muestra una **demanda estimada**,
+no una venta observada por tienda. La estimación reparte la venta empresa
+proporcionalmente al surtido que cada tienda mantiene en la categoría del
+producto (o subcategoría): productos distintos con stock positivo en esa tienda
+divididos por el total de productos con stock positivo de ese perfil entre las
+cinco tiendas. Un producto agotado sigue siendo candidato si la tienda conserva
+un peso de perfil suficiente. Los pesos de las tiendas candidatas se
+normalizan y, para los productos con perfil estimable, la suma de su demanda
+estimada conserva la venta empresa. Si no hay categoría/perfil coincidente, la
+venta permanece exacta en el resumen de empresa y el tablero advierte que no se
+pudo estimar por tienda; no se asigna un perfil arbitrario.
+
+## Vistas
+
+- **Qué necesita cada tienda**: selector de tienda, alertas Crítico/Atención,
+  venta estimada/día, cobertura estimada, stock, unidades a reponer, almacén y
+  acción sugerida (`Traer de almacén`, `Traer parcial` o `Comprar/pedir`).
+- **Resumen empresa**: stock exacto agregado de tiendas y almacenes frente a
+  venta empresa/día; identifica productos agotados en todo el sistema y los
+  disponibles solo en almacén.
+- **Más vendidos**: ranking de unidades de los últimos 30 días por producto o
+  categoría, agregado a nivel empresa.
+
+La redistribución entre tiendas no se recomienda: queda para una mejora futura.
+La acción de reposición contempla únicamente traer stock del almacén.
+
+## Reglas y parámetros
+
+Para cada tienda candidata, la cobertura es stock dividido por demanda
+estimada/día. Los estados existentes son:
+
+- **Crítico**: sin stock, stock de una unidad o menos, o cobertura menor de 2
+  días.
+- **Atención**: stock menor al mínimo o cobertura menor de 5 días.
+- **Sobrestock**: cobertura mayor de 45 días.
+- **Normal**: el resto.
+- **Sin rotación**: venta estimada diaria igual a cero.
+
+La cantidad sugerida es `max(0, ceil(demanda_estimada_día * días_objetivo) -
+stock)`. Si `stock_min` de la tienda es mayor que cero, se usa como mínimo;
+si no, se aplica `MINIMOS_POR_PRODUCTO` o el mínimo general.
+
+En `config.py` se pueden ajustar:
+
+- `SEDES`: las cinco tiendas consideradas.
+- `NIVEL_PERFIL`: `categoria` por defecto; también admite `subcategoria` si los
+  datos incluyen esa columna.
+- `UMBRAL_PESO`: peso mínimo para incluir una tienda candidata, por defecto
+  `0.15`.
+- `PISO_MINIMO_UNIDADES`, `DIAS_MINIMO` y `MINIMOS_POR_PRODUCTO`.
+
+El deslizante de días objetivo comienza en 7. Las estimaciones no consideran
+tiempos de entrega ni pedidos en tránsito.
+
+## Pruebas
 
 ```powershell
-python -m pip install -r requirements.txt
 pytest
 ```
 
-## Reglas de reposición
-
-La fecha más reciente del CSV se usa como “hoy”. Para cada producto y sede se
-calculan:
-
-- Venta/día: promedio de `cantidad_vendida` en los últimos 30 días.
-- Venta/día 7d: promedio en los últimos 7 días.
-- Stock actual: valor de `stock` del último día registrado.
-- Cobertura: stock actual dividido por venta/día de 30 días. Si no hay ventas,
-  la cobertura es infinita y el estado es `Sin rotación`.
-- Mínimo: el mayor valor entre `PISO_MINIMO_UNIDADES` y
-  `ceil(venta_diaria * DIAS_MINIMO)`. `MINIMOS_POR_PRODUCTO` puede reemplazar
-  el mínimo para un producto concreto.
-- Cantidad a reponer: `max(0, ceil(venta_diaria * dias_objetivo) - stock)`.
-
-Estados:
-
-- 🔴 Crítico: stock 0 o menor que 1, o cobertura menor de 2 días.
-- 🟠 Atención: stock menor que el mínimo o cobertura menor de 5 días.
-- 🟣 Sobrestock: cobertura mayor de 45 días.
-- 🟢 Normal: el resto.
-- Sin rotación: venta diaria de 30 días igual a cero.
-
-La pestaña “Reposición de hoy” permite listar alertas, filtrar por sede y
-categoría y descargar `reposicion_AAAA-MM-DD.csv`, agrupada por sede para el
-almacén.
-
-Si el CSV incluye `stock_almacen`, se muestran las unidades disponibles y cuánto
-se puede reponer realmente. Sin esa columna, el tablero indica que no puede
-confirmarse el abastecimiento. `stock_almacen` no forma parte de las columnas
-requeridas.
-
-## Parámetros
-
-Se pueden ajustar en `config.py`:
-
-- `SEDES`: sedes disponibles.
-- `DIAS_VENTA_30`: ventana principal, por defecto 30.
-- `DIAS_VENTA_7`: ventana corta, por defecto 7.
-- `PISO_MINIMO_UNIDADES`: mínimo general, por defecto 2.
-- `DIAS_MINIMO`: días usados para calcular el mínimo, por defecto 7.
-- `MINIMOS_POR_PRODUCTO`: diccionario opcional, por ejemplo
-  `{"Tarjeta gráfica RTX": 1}`.
-
-El deslizante “Días de cobertura objetivo” tiene como valor inicial 7.
-
-> Los archivos reales deben guardarse solo en `datos/`. No agregues
-> exportaciones de la empresa a Git.
+Las pruebas usan datasets pequeños creados en memoria; no requieren exportar ni
+versionar datos reales.
